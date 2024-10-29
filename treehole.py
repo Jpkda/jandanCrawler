@@ -14,7 +14,7 @@ import configs
 #
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-sem = asyncio.Semaphore(5)
+sem = asyncio.Semaphore(3)
 
 
 async def get_page(url: str, response_type: str):
@@ -63,9 +63,8 @@ async def format_time(time_str: str):
         raise ValueError("输入格式不正确")
 
 
-async def parse_page(response):
+async def parse_next_page(response):
     try:
-        # 得到下一页连接
         page_nexts = response.find('div', class_='cp-pagenavi')
         page_link = ""
         if page_nexts:
@@ -73,14 +72,21 @@ async def parse_page(response):
                 'href')  # //jandan.net/treehole/MjAyNDEwMjgtNjQ=#comments
             page_link = ''.join(["https:", page_next])
         logging.info(f"下一页链接：{page_link}")
+        return page_link
+    except Exception as e:
+        logging.error(f"解析下一页链接时出错: {e}")
+        return None, []
 
+
+async def parse_page_content(response):
+    try:
         page_items = response.find('ol', class_='commentlist').findAll('li')
         item_json_links = []  # 页面子页链接
         content_list = []  # 树洞发帖详细内容
         if page_items:
             for page_item in page_items:
                 # 得到页面所有的子页id，并构造json链接
-                text =  page_item.get('id')
+                text = page_item.get('id')
                 page_id = ''.join(filter(str.isdigit, text))
                 head = "https://jandan.net/api/tucao/all/"
                 item_link = ''.join([head, page_id])
@@ -92,7 +98,7 @@ async def parse_page(response):
                 formatted_time = await format_time(time)
                 todo_dict = {
                     'author': page_item.find('strong').text,
-                    'time_info':  formatted_time, #时间处理
+                    'time_info': formatted_time,  # 时间处理
                     'post_text': page_item.find('div', class_='text').p.get_text(separator='', strip=True),
                     'endorse': page_item.find('span', class_='tucao-like-container').span.text,
                     'oppose': page_item.find('span', class_='tucao-unlike-container').span.text,
@@ -116,11 +122,11 @@ async def parse_page(response):
 
         logging.info(f"单页全部数据：{comment_list}")
 
-        return page_link, comment_list
-    except Exception as e:
-        logging.error(f"解析页面时出错: {e}")
-        return None, []
+        return comment_list
 
+    except Exception as e:
+        logging.error(f"解析下一页页面内容时出错: {e}")
+        return None, []
 
 async def parse_item_json(url):
     data_json = await get_page(url, "json")
@@ -139,34 +145,30 @@ async def parse_item_json(url):
     return todo_list
 
 
-async def producer(queue: asyncio.Queue, start_url: str):
+async def producer( start_url: str):
     url = start_url
     while url:
-        await queue.put(url)
+        # await queue.put(url)
         html = await get_page(url, "http")
 
         if html is None:
             logging.error("无法获取起始页面，程序结束")
             return
-
-        next_url, results = await parse_page(html)
+        yield html
+        next_url = await parse_next_page(html)
         url = next_url
 
 
 async def consumer(queue: asyncio.Queue):
     while True:
-        url = await queue.get()
-        if url is None:
-            queue.task_done()  # 确保对结束信号的任务也标记为完成
+        response = await queue.get()
+        if response is None:
+            queue.task_done()
             break
         try:
-            html = await get_page(url, "http")
-            if html is not None:
-                await parse_page(html)
-            else:
-                logging.warning(f"无法获取页面: {url}")
+            await parse_page_content(response)
         except Exception as e:
-            logging.error(f"处理 {url} 时出错: {e}")
+            logging.error(f"处理页面时出错: {e}")
         finally:
             queue.task_done()
 
@@ -175,15 +177,16 @@ async def main(start_url: str):
     next_page_queue = asyncio.Queue()
     consumers = [asyncio.create_task(consumer(next_page_queue)) for _ in range(3)]
     try:
-        await producer(next_page_queue, start_url)
+        async for response in producer(start_url):
+            await next_page_queue.put(response)
     except Exception as e:
         logging.error(f"生产者出错: {e}")
         return
 
-    await next_page_queue.join()
+    await next_page_queue.join()  # 等待所有任务完成
 
     for _ in consumers:
-        await next_page_queue.put(None)
+        await next_page_queue.put(None)  # 结束信号
     await asyncio.gather(*consumers)
 
 
