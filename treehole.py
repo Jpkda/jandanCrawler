@@ -1,8 +1,10 @@
+import re
+
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
 import logging
-import datetime
+from datetime import datetime, timedelta
 import configs
 
 #
@@ -33,8 +35,32 @@ async def get_page(url: str, response_type: str):
                 logging.error(f"请求超时")
                 return None
 
+# 处理时间
+async def format_time(time_str: str):
+    match = re.match(r'@(\d+)(分钟|小时|天|周) ago', time_str)
+    if match:
+        amount = int(match.group(1))
+        unit = match.group(2)
 
+        # 根据单位创建相应的时间差
+        if unit == '周':
+            delta = timedelta(weeks=amount)
+        elif unit == '天':
+            delta = timedelta(days=amount)
+        elif unit == '小时':
+            delta = timedelta(hours=amount)
+        elif unit == '分钟':
+            delta = timedelta(minutes=amount)
+        else:
+            raise ValueError(f"未知的时间单位: {unit}")
 
+        # 计算准确的时间
+        now_time = datetime.now() - delta
+        formatted_time = now_time.strftime('%Y-%m-%d %H')
+        logging.info(f"时间：{formatted_time}")
+        return formatted_time
+    else:
+        raise ValueError("输入格式不正确")
 
 
 async def parse_page(response):
@@ -54,15 +80,19 @@ async def parse_page(response):
         if page_items:
             for page_item in page_items:
                 # 得到页面所有的子页id，并构造json链接
-                text = page_item.get('id')
+                text =  page_item.get('id')
                 page_id = ''.join(filter(str.isdigit, text))
                 head = "https://jandan.net/api/tucao/all/"
                 item_link = ''.join([head, page_id])
                 item_json_links.append(item_link)
                 # 得到树洞内容
+                time = page_item.find('small').a.text
+                logging.info(f"Parsing time string: {time}")
+                # await asyncio.sleep(1)
+                formatted_time = await format_time(time)
                 todo_dict = {
                     'author': page_item.find('strong').text,
-                    'time_info': page_item.find('small').a.text,
+                    'time_info':  formatted_time, #时间处理
                     'post_text': page_item.find('div', class_='text').p.get_text(separator='', strip=True),
                     'endorse': page_item.find('span', class_='tucao-like-container').span.text,
                     'oppose': page_item.find('span', class_='tucao-unlike-container').span.text,
@@ -141,17 +171,13 @@ async def consumer(queue: asyncio.Queue):
             queue.task_done()
 
 
-async def mian(start_url: str):
+async def main(start_url: str):
     next_page_queue = asyncio.Queue()
     consumers = [asyncio.create_task(consumer(next_page_queue)) for _ in range(3)]
     try:
         await producer(next_page_queue, start_url)
     except Exception as e:
         logging.error(f"生产者出错: {e}")
-        return
-
-    if next_page_queue.empty():
-        logging.error("队列空值，程序结束")
         return
 
     await next_page_queue.join()
@@ -167,4 +193,6 @@ if __name__ == '__main__':
 
     # asyncio.run(parse_page(url))
     # asyncio.run(paser_json(url_json))
-    asyncio.run(mian(url))
+    logging.basicConfig(level=logging.INFO)
+    # asyncio.run(format_time('@30分钟 ago'))
+    asyncio.run(main(url))
