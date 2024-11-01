@@ -7,22 +7,27 @@ import tools
 #   主页：https://jandan.net/treehole
 #   子页：https://jandan.net/t/5781622
 #   子页JSON：https://jandan.net/api/tucao/all/5781622
-#
+# TODO 队列最后一页的内容获取失败，队列退出时数据还没处理完成
+
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+data_time = None
 
-
-# 解析下一页的链接
+# 解析下一页的链接  return page_link, html_time
 async def parse_next_page(response):
     try:
-        page_nexts = response.find('div', class_='cp-pagenavi')
+        page_item = response.find('ol', class_='commentlist').find('li')  # 时间
+        time = page_item.find('small').a.text
+        # logging.info(f"Parsing time string: {time}")
+        html_time = await tools.format_time(time)
+        page_nexts = response.find('div', class_='cp-pagenavi')  # 下一页
         page_link = ""
         if page_nexts:
             # //jandan.net/treehole/MjAyNDEwMjgtNjQ=#comments
             page_next = page_nexts.find('a', title='Older Comments').get('href')
             page_link = ''.join(["https:", page_next])
         logging.info(f"下一页链接：{page_link}")
-        return page_link
+        return page_link, html_time
     except Exception as e:
         logging.error(f"解析下一页链接时出错: {e}")
         return None, []
@@ -46,10 +51,12 @@ async def parse_page_content(response):
                 time = page_item.find('small').a.text
                 # logging.info(f"Parsing time string: {time}")
                 formatted_time = await tools.format_time(time)
+                # 处理帖子内容
+                post_texts = page_item.find('div', class_='text').find_all('p')
                 todo_dict = {
                     "author": page_item.find('strong').text,
                     "time_info": formatted_time,  # 时间处理
-                    "post_text": page_item.find('div', class_='text').p.get_text(separator='', strip=True),
+                    "post_text": ' '.join([p.get_text(strip=True) for p in post_texts]),
                     "endorse": page_item.find('span', class_='tucao-like-container').span.text,
                     "oppose": page_item.find('span', class_='tucao-unlike-container').span.text,
                     "tucao_count": page_item.find('a', class_='tucao-btn').text.split('[')[-1].split(']')[0]
@@ -96,15 +103,21 @@ async def parse_item_json(url: str):
 
 
 async def get_next_page(start_url: str):
+    global data_time
     url = start_url
     while url:
         html = await tools.request_page(url, "http")
-
         if html is None:
             logging.error(f"无法获取:{url}页面，程序结束")
             return
-        yield html
-        next_url = await parse_next_page(html)
+        next_url, html_time = await parse_next_page(html)
+        if data_time is None:
+            data_time = await tools.find_time()
+        if await tools.judge_time(html_time, data_time):
+            yield html
+        else:
+            logging.info(f"数据库时间相等与网页时间，程序退出")
+            return
         url = next_url
 
 
@@ -116,6 +129,7 @@ async def get_page_content(queue: asyncio.Queue):
             break
         try:
             data = await parse_page_content(response)
+            logging.info(f"分页全部数据{data}")
             await tools.save_to_mongo(data)  # 数据插入到数据库
         except Exception as e:
             logging.error(f"处理页面时出错: {e}")
@@ -147,4 +161,5 @@ if __name__ == '__main__':
     # asyncio.run(parse_page(url))
     # asyncio.run(paser_json(url_json))
     # asyncio.run(format_time('@30分钟 ago'))
+    asyncio.run(tools.find_time())
     asyncio.run(main(url))
