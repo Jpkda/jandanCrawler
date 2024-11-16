@@ -1,5 +1,5 @@
 import logging
-from tools import request_page
+from tools import Tools
 import asyncio
 
 
@@ -22,7 +22,7 @@ class Pic:
         base_url = "https://jandan.net/api/v1/tucao/list/"
         item_url = f"{base_url}{item_id}"
         try:
-            data = await request_page(item_url, "json")
+            data = await Tools.request_page(item_url, "json")
             item_list = []
             for comment in data.get("comments", []):
                 todo_dict = {
@@ -43,7 +43,7 @@ class Pic:
 
     async def parse_page(self):
         try:
-            data = await request_page(self.pic_start_url, "json")
+            data = await Tools.request_page(self.pic_start_url, "json")
             logging.info(f"返回全部数据{pic_start_api}{data}")
 
             todo_list = []

@@ -1,8 +1,7 @@
 import asyncio
 import logging
 from pymongo.errors import PyMongoError
-import tools
-from tools import db_collection
+from tools import Tools
 
 
 #
@@ -140,7 +139,7 @@ class TreeHole:
             finally:
                 queue.task_done()
 
-    @db_collection("jandan_hole", "hole_content")
+    @Tools.db_collection("jandan_hole", "hole_content")
     async def save_to_mongo(self, data, collection=None):
         try:
             # 异步插入数据
@@ -172,7 +171,7 @@ class TreeHole:
 if __name__ == '__main__':
     url = "https://jandan.net/treehole"
     url_json = "https://jandan.net/api/tucao/all/5781622"
-
+    tools = Tools()
     asyncio.run(tools.mongo_time_sort())
     asyncio.run(tools.find_time())
     hole = TreeHole(url)
