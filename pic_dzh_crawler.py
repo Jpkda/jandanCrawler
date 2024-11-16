@@ -1,9 +1,8 @@
 import logging
-from tools import request_page, get_headers
+from tools import request_page
 import asyncio
 
 
-#
 # 子网站 https://jandan.net/dzh
 # 图片评论接口 https://jandan.net/api/v1/tucao/list/5785631
 # 图片当前页接口 https://jandan.net/api/v1/comment/flow_recommend
@@ -16,9 +15,10 @@ class Pic:
 
     def __init__(self, pic_start_url):
         self.pic_start_url = pic_start_url
+        logging.basicConfig(level=logging.INFO)
 
     @classmethod
-    async def parse_itme_page(self, item_id: str) -> list:  # 图片评论接口 https://jandan.net/api/v1/tucao/list/5785631
+    async def parse_itme_page(cls, item_id: str) -> list:  # 图片评论接口 https://jandan.net/api/v1/tucao/list/5785631
         base_url = "https://jandan.net/api/v1/tucao/list/"
         item_url = f"{base_url}{item_id}"
         try:
@@ -78,20 +78,31 @@ class Pic:
     async def run(self):
         visited = set()
         stack = [self.pic_start_url]
-        # semaphore = asyncio.Semaphore(max_concurrent_requests)
         while stack:
             current_url = stack.pop()
             if current_url in visited:
                 continue
             visited.add(current_url)
             self.pic_start_url = current_url
-            all_data, next_url = await self.parse_page()
+            all_data, next_url = await self.parse_page()  # all_data
             if next_url:
                 stack.append(next_url)
+        # while stack:
+        #     current_url = stack.pop()
+        #     if current_url in visited:   # 如果该 URL 已经访问过，跳过
+        #         continue
+        #     visited.add(current_url)
+        #     tasks.append(self.process_url(current_url))  # 为当前 URL 创建一个异步任务，并将其添加到任务列表中
+        #     if len(tasks) >= 3 or not stack:  # 使用 asyncio.gather 来并发执行所有任务
+        #         completed_data = await asyncio.gather(*tasks)  # 等待所有当前的任务完成
+        #         tasks.clear()  # 清空任务列表
+        #         for data, next_url in completed_data:
+        #             logging.info(f"处理完的数据: {data}")
+        #             if next_url:
+        #                 stack.append(next_url)  # 将新的 URL 添加到堆栈中
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
     pic_start_api = "https://jandan.net/api/v1/comment/flow_recommend"
     pic = Pic(pic_start_api)
     asyncio.run(pic.run())

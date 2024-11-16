@@ -1,6 +1,8 @@
 import asyncio
 import re
 from datetime import datetime, timedelta
+from functools import wraps
+
 import aiohttp
 from bs4 import BeautifulSoup
 import logging
@@ -9,11 +11,10 @@ from minio import S3Error
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import PyMongoError
 import minio
-import os
 import io
 
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 sem = asyncio.Semaphore(3)
 
 
@@ -83,29 +84,34 @@ async def request_page(url: str, response_type: str, **kwargs):
 
 
 async def mongo_client(data_db: str, collect: str):
-    client = AsyncIOMotorClient('mongodb://localhost:27017/')
-    hole = client[data_db]
-    collection = hole[collect]
-    return collection
+    try:
+        client = AsyncIOMotorClient('mongodb://localhost:27017/')
+        hole = client[data_db]
+        collection = hole[collect]
+        logging.info(f"成功连接到数据库 {data_db}，集合 {collect}")
+        return collection
+    except Exception as e:
+        logging.error(f"连接数据库失败: {e}")
+        raise
 
 
 # 保存到 hole 数据库中
-async def save_to_mongo(data):
-    collection = await mongo_client("jandan_hole", "hole_content")
-    logging.info(f"插入data的信息: {data}")
-    try:
-        # 异步插入数据
-        result = await collection.insert_many(data)
-        # 检查插入是否成功
-        if result.inserted_ids:
-            logging.info(f"成功插入文档，ID: {result.inserted_ids}")
-            return result.inserted_ids
-        else:
-            logging.warning("插入文档失败，但没有抛出异常。")
-            return None
-    except PyMongoError as e:
-        logging.error(f"插入文档时发生错误: {e}")
-        return None
+# async def save_to_mongo(collection, data):
+#     # collection = await mongo_client("jandan_hole", "hole_content")
+#     logging.info(f"插入data的信息: {data}")
+#     try:
+#         # 异步插入数据
+#         result = await collection.insert_many(data)
+#         # 检查插入是否成功
+#         if result.inserted_ids:
+#             logging.info(f"成功插入文档，ID: {result.inserted_ids}")
+#             return result.inserted_ids
+#         else:
+#             logging.warning("插入文档失败，但没有抛出异常。")
+#             return None
+#     except PyMongoError as e:
+#         logging.error(f"插入文档时发生错误: {e}")
+#         return None
 
 
 # 返回最大的order_time中的时间
@@ -135,8 +141,6 @@ async def find_time():
 
 # 如果true 网页时间大于数据库时间
 async def judge_time(html_time, data_time):
-    # if data_time is not True:  # 数据库没有数据，就全部爬取
-    #     return True
     time1 = datetime.strptime(html_time, "%Y-%m-%d %H")
     time2 = datetime.strptime(data_time, "%Y-%m-%d %H")
     logging.info(f"时间：html_time:{html_time},data_time:{data_time}")
@@ -168,7 +172,7 @@ async def remove_field(field:str):
 
 async def minio_client(bucket_name: str):
     minio_client = minio.Minio(
-            "192.168.150.102:9000",
+"192.168.150.102:9000",
         access_key="minioadmin",
         secret_key="minioadmin",
         secure=False
@@ -216,19 +220,28 @@ async def upload_img(img_url, bucket_name, object_name):
 
 
 
-
-
-
+# 装饰器db_collection 将数据库名和集合名传递给 mongo_client
+def db_collection(data_db: str, collect: str):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # 自动传递数据库和集合名
+            collection = await mongo_client(data_db, collect)
+            # 将 collection 添加到 kwargs 中，供实际函数使用
+            kwargs['collection'] = collection
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 if __name__ == '__main__':
-    test_dict = [{'author': '迟来的秋天', 'time_info': '2024-10-29 17', 'post_text': '今天用了一下湿厕纸，舒服的。😄', 'endorse': '9', 'oppose': '0', 'tucao_count': '0', 'comment': []}]
+    test_dict = [{'author': '迟来的秋天', 'time_info': '2024-10-29 17', 'post_text': '今天', 'endorse': '9', 'oppose': '0', 'tucao_count': '0', 'comment': []}]
     image_jpg_path = "test/test_up.jpg"
     image_gif_path = "test/test_up.gif"
     img_url = "https://wx4.moyu.im/large/dedb234agy1hva8zhx3v6j20u00um792.jpg"
     # asyncio.run(save_to_mongo(test_dict))
-    # asyncio.run(mongo_time_sort())
+    asyncio.run(mongo_time_sort())
     # asyncio.run(find_time())
     # asyncio.run(remove_field("sort_order"))
-    asyncio.run(upload_img(img_url, "jandan-pic", "dedb234agy1hva8zhx3v6j20u00um792.jpg"))
+    # asyncio.run(upload_img(img_url, "jandan-pic", "dedb234agy1hva8zhx3v6j20u00um792.jpg"))
 
