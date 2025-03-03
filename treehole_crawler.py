@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pymongo.errors import PyMongoError
 from tools import Tools
+import tools
 
 
 #
@@ -10,6 +11,7 @@ from tools import Tools
 #   子页JSON：https://jandan.net/api/tucao/all/5781622
 # TODO 队列最后一页的内容获取失败，队列退出时数据还没处理完成
 # TODO 只有一个异步任务运行
+# TODO 完成评论数据更新
 
 data_time = None
 
@@ -133,13 +135,12 @@ class TreeHole:
                 logging.info(f"插入数据的数据{data}")
                 await self.save_to_mongo(data)
 
-
             except Exception as e:
                 logging.error(f"处理页面时出错: {e}")
             finally:
                 queue.task_done()
 
-    @Tools.db_collection("jandan_hole", "hole_content")
+    @tools.db_collection("jandan_hole", "hole_content")
     async def save_to_mongo(self, data, collection=None):
         try:
             # 异步插入数据

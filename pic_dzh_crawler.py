@@ -1,6 +1,8 @@
 import logging
-from tools import Tools
+from tools import db_collection
 import asyncio
+from pymongo.errors import PyMongoError
+from tools import Tools
 
 
 # 子网站 https://jandan.net/dzh
@@ -9,10 +11,10 @@ import asyncio
 # 图片下一页接口 https://jandan.net/api/v1/comment/flow_recommend?start=5785565
 # 一页20组图片数据
 # referer: https://jandan.net/dzh
+# TODO 根据从网页获取的时间进行停止抓取
 
 
 class Pic:
-
     def __init__(self, pic_start_url):
         self.pic_start_url = pic_start_url
         logging.basicConfig(level=logging.INFO)
@@ -75,6 +77,29 @@ class Pic:
             logging.error(f"获取页面数据失败 for {pic_start_api}: {e}")
             return [], None
 
+    @db_collection(data_db="jandan_hole", collect="pic_info")
+    async def save_to_mongo(self, data, collection=None):
+        try:
+            result = await collection.insert_many(data)
+            if result.inserted_ids:
+                logging.info(f"成功插入文档，ID：{result.inserted_ids}")
+        except PyMongoError as e:
+            logging.error(f"插入文档失败：{e}")
+
+    @db_collection(data_db="jandan_hole", collect="date_info")
+    async def handle_db_last_time(self, time: str, collection=None):
+        try:
+            # 获取文档中时间字段的单个信息
+            document = await collection.find_one({}, {"pic_time": 1})  # 只查询time字段
+            if document and "time" in document:
+                return document["time"]
+            else:
+                return None
+        except Exception as e:
+            print(f"Error fetching 'time' field: {e}")
+            return None
+
+
     async def run(self):
         visited = set()
         stack = [self.pic_start_url]
@@ -85,21 +110,9 @@ class Pic:
             visited.add(current_url)
             self.pic_start_url = current_url
             all_data, next_url = await self.parse_page()  # all_data
+            await self.save_to_mongo(all_data)  # 保存到数据库
             if next_url:
                 stack.append(next_url)
-        # while stack:
-        #     current_url = stack.pop()
-        #     if current_url in visited:   # 如果该 URL 已经访问过，跳过
-        #         continue
-        #     visited.add(current_url)
-        #     tasks.append(self.process_url(current_url))  # 为当前 URL 创建一个异步任务，并将其添加到任务列表中
-        #     if len(tasks) >= 3 or not stack:  # 使用 asyncio.gather 来并发执行所有任务
-        #         completed_data = await asyncio.gather(*tasks)  # 等待所有当前的任务完成
-        #         tasks.clear()  # 清空任务列表
-        #         for data, next_url in completed_data:
-        #             logging.info(f"处理完的数据: {data}")
-        #             if next_url:
-        #                 stack.append(next_url)  # 将新的 URL 添加到堆栈中
 
 
 if __name__ == '__main__':
