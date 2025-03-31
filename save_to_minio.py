@@ -43,7 +43,6 @@ class SaveToMinio:
         self.document_mian_id_key = config.get("document_mian_id_key", "_id")
 
         self.headers = config.get("headers", {})
-        print(self.headers)
 
         self.collection = None
         self.mongo_db_name = config.get("mongo_db_name", "")

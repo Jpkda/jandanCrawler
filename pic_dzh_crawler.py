@@ -1,8 +1,8 @@
 import logging
-from tools import db_collection
+from tools import db_collection, Tools
 import asyncio
 from pymongo.errors import PyMongoError
-from tools import Tools
+
 
 
 # 子网站 https://jandan.net/dzh
@@ -18,6 +18,11 @@ class Pic:
     def __init__(self, pic_start_url):
         self.pic_start_url = pic_start_url
         logging.basicConfig(level=logging.INFO)
+        self.config_file = "stop_fetch_timestamp.json"
+        self.config_time_key = "pic_dzh_crawler"
+        self.stop_time_dict = tools.local_json_load(self.config_file, self.config_time_key)
+        self.stop_time = self.stop_time_dict.get(self.config_time_key, "none")
+        self.first_html_time = None
 
     @classmethod
     async def parse_itme_page(cls, item_id: str) -> list:  # 图片评论接口 https://jandan.net/api/v1/tucao/list/5785631
@@ -50,11 +55,16 @@ class Pic:
 
             todo_list = []
             last_page_id = None  # 记录最后一个页面id
+            html_time_now = None  # 记录第一个页面时间
             for item in data.get("data", []):
                 imgs = []
                 for img in item.get("images"):
                     imgs.append(img.get("full_url", ""))
                 itme_id = item.get("id", "未知")
+                if self.first_html_time is None:
+                    self.first_html_time = item.get("date", "未知时间")
+                if html_time_now is None:
+                    html_time_now = item.get("date", "未知时间")
                 sub_data = await self.parse_itme_page(itme_id)  # 获取评论列表
                 todo_dict = {
                     "pic_id": itme_id,
@@ -72,7 +82,7 @@ class Pic:
             next_page_base_url = "https://jandan.net/api/v1/comment/flow_recommend?start="
             next_page = f"{next_page_base_url}{last_page_id}"
             logging.info(f"单个item数据{todo_list}")
-            return todo_list, next_page
+            return todo_list, next_page, html_time_now
         except Exception as e:
             logging.error(f"获取页面数据失败 for {pic_start_api}: {e}")
             return [], None
@@ -99,7 +109,6 @@ class Pic:
             print(f"Error fetching 'time' field: {e}")
             return None
 
-
     async def run(self):
         visited = set()
         stack = [self.pic_start_url]
@@ -109,13 +118,21 @@ class Pic:
                 continue
             visited.add(current_url)
             self.pic_start_url = current_url
-            all_data, next_url = await self.parse_page()  # all_data
+            all_data, next_url, html_time_now = await self.parse_page()  # all_data
             await self.save_to_mongo(all_data)  # 保存到数据库
+            if await tools.judge_time(self.stop_time, html_time_now):
+                logging.info(f"时间已超过{self.stop_time}，停止抓取")
+                tools.local_json_update(
+                    self.config_file,
+                    {self.config_time_key: self.first_html_time}
+                )
+                break
             if next_url:
                 stack.append(next_url)
 
 
 if __name__ == '__main__':
     pic_start_api = "https://jandan.net/api/v1/comment/flow_recommend"
+    tools = Tools()
     pic = Pic(pic_start_api)
     asyncio.run(pic.run())

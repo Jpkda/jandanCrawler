@@ -13,13 +13,17 @@ import tools
 # TODO 只有一个异步任务运行
 # TODO 完成评论数据更新
 
-data_time = None
 
 
 class TreeHole:
     def __init__(self, start_url):
         self.start_url = start_url
         logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+        self.config_file = "stop_fetch_timestamp.json"
+        self.config_time_key = "treehole_crawler"
+        self.stop_time_dict = tools.local_json_load(self.config_file, self.config_time_key)
+        self.stop_time = self.stop_time_dict.get(self.config_time_key, "none")
+        self.first_html_time = None  # 保存第一页第一项item的时间
 
     @classmethod
     # 解析下一页的链接  return page_link, html_time
@@ -27,14 +31,12 @@ class TreeHole:
         try:
             page_item = response.find('ol', class_='commentlist').find('li')  # 时间
             time = page_item.find('small').a.text
-            # logging.info(f"Parsing time string: {time}")
             html_time = await tools.format_time(time)
             page_next = response.find('div', class_='cp-pagenavi')  # 下一页
             page_link = ""
             if page_next:
-                # //jandan.net/treehole/MjAyNDEwMjgtNjQ=#comments
                 page_next = page_next.find('a', title='Older Comments').get('href')
-                page_link = ''.join(["https:", page_next])
+                page_link = page_next
             logging.info(f"下一页链接：{page_link}")
             return page_link, html_time
         except Exception as e:
@@ -59,7 +61,6 @@ class TreeHole:
                 item_json_links.append(item_link)
                 # 得到树洞内容
                 time = page_item.find('small').a.text
-                # logging.info(f"Parsing time string: {time}")
                 formatted_time = await tools.format_time(time)
                 # 处理帖子内容
                 post_texts = page_item.find('div', class_='text').find_all('p')
@@ -103,11 +104,9 @@ class TreeHole:
                 "oppose": item.get("vote_negative", 0),
             }
             todo_list.append(todo_dict)
-        # logging.info(f"吐槽链{todo_list}")
         return todo_list
 
     async def get_next_page(self):
-        global data_time
         current_url = self.start_url
         while current_url:
             html = await tools.request_page(current_url, "http")
@@ -115,19 +114,24 @@ class TreeHole:
                 logging.error(f"无法获取:{current_url}页面，程序结束")
                 return
             next_url, html_time = await self.parse_next_page(html)
-            if data_time is None:  # 如果是第一次运行，就从数据库里获取最后一次的插入时间
-                data_time = await tools.find_time()
-            if await tools.judge_time(html_time, data_time):  # 判断数据库最后插入时间与网页获取的时间
+            if self.first_html_time is None:
+                self.first_html_time = html_time  # item信息是由新到旧的，所以取第一个时间
+            if await tools.judge_time(html_time, self.stop_time):
                 yield html
             else:
-                logging.info("数据库时间相等与网页时间，程序退出")
+                logging.info("文件时间大于与网页时间，程序退出")
+                # 更新 json 时间信息
+                tools.local_json_update(
+                    self.config_file,
+                    {self.config_time_key: self.first_html_time}
+                )
                 return
             current_url = next_url
 
     async def get_page_content(self, queue: asyncio.Queue):
         while True:
             response = await queue.get()
-            if response is None:  # 结束信号
+            if response is None:
                 queue.task_done()
                 break
             try:
@@ -143,7 +147,6 @@ class TreeHole:
     @tools.db_collection("jandan_hole", "hole_content")
     async def save_to_mongo(self, data, collection=None):
         try:
-            # 异步插入数据
             result = await collection.insert_many(data)
             if result.inserted_ids:
                 logging.info(f"成功插入文档，ID: {result.inserted_ids}")
@@ -173,8 +176,6 @@ if __name__ == '__main__':
     url = "https://jandan.net/treehole"
     url_json = "https://jandan.net/api/tucao/all/5781622"
     tools = Tools()
-    asyncio.run(tools.mongo_time_sort())
-    asyncio.run(tools.find_time())
     hole = TreeHole(url)
     asyncio.run(hole.main())
     asyncio.run(tools.mongo_time_sort())

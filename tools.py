@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 from datetime import datetime, timedelta
 from functools import wraps
@@ -80,7 +81,7 @@ class Tools:
 
             # 计算准确的时间
             now_time = datetime.now() - delta
-            formatted_time = now_time.strftime('%Y-%m-%d %H')
+            formatted_time = now_time.strftime('%Y-%m-%d %H:%M:%S')
             # logging.info(f"时间：{formatted_time}")
             return formatted_time
         else:
@@ -133,11 +134,11 @@ class Tools:
         except Exception as e:
             logging.error(f"find_time函数：{e}")
 
-    # 如果true 网页时间大于数据库时间
+
     @classmethod
     async def judge_time(cls, html_time, data_time):
-        time1 = datetime.strptime(html_time, "%Y-%m-%d %H")
-        time2 = datetime.strptime(data_time, "%Y-%m-%d %H")
+        time1 = datetime.strptime(html_time, "%Y-%m-%d %H:%M:%S")
+        time2 = datetime.strptime(data_time, "%Y-%m-%d %H:%M:%S")
         logging.info(f"时间：html_time:{html_time},data_time:{data_time}")
         if time1 > time2:
             return True
@@ -178,8 +179,43 @@ class Tools:
             minio_client.make_bucket(bucket_name)
         return minio_client
 
+    @staticmethod
+    def local_json_load(file_name: str, *keys):
+        try:
+            with open(file_name, 'r') as file:
+                data = json.load(file)
+                # 如果没有传入键，返回整个数据
+                if not keys:
+                    return data
+                # 提取键对应的值，返回一个字典
+                result = {key: data.get(key) for key in keys}
+                return result
+        except FileNotFoundError:
+            logging.error(f"文件{file_name}不存在")
+            return None
+        except json.JSONDecodeError:
+            logging.error(f"文件{file_name}不是有效的JSON文件")
+            return None
 
-    # 装饰器db_collection 将数据库名和集合名传递给 mongo_client
+    @staticmethod
+    def local_json_update(file_name: str, updates: dict):
+        try:
+            # 读取现有的 JSON 数据
+            with open(file_name, 'r') as file:
+                data = json.load(file)
+            # 更新指定的键值
+            data.update(updates)
+            # 将更新后的数据写回文件
+            with open(file_name, 'w') as file:
+                json.dump(data, file, ensure_ascii=False, indent=4)
+            logging.info(f"成功更新文件 {file_name}")
+        except FileNotFoundError:
+            logging.error(f"文件{file_name}不存在")
+        except json.JSONDecodeError:
+            logging.error(f"文件{file_name}不是有效的JSON文件")
+        except Exception as e:
+            logging.error(f"更新文件{file_name}时发生错误: {e}")
+
 
 
 if __name__ == '__main__':
@@ -190,9 +226,9 @@ if __name__ == '__main__':
     image_gif_path = "test/test_up.gif"
     img_url = "https://wx4.moyu.im/large/dedb234agy1hva8zhx3v6j20u00um792.jpg"
     tools = Tools()
-    asyncio.run(tools.remove_field("upload_status"))
+    # asyncio.run(tools.remove_field("upload_status"))
 
     # asyncio.run(tools.mongo_time_sort())
     # asyncio.run(tools.find_time())
     # asyncio.run(tools.remove_field("sort_order"))
-
+    tools.local_json_load("stop_fetch_timestamp.json", "treehole_crawler")
